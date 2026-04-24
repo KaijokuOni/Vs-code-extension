@@ -114,6 +114,16 @@ function triggerQuiz(diff: string): Promise<boolean> {
     let answered = false;
 
     panel.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.command === 'security-violation' && !answered) {
+        answered = true;
+        panel.dispose();
+        vscode.window.showErrorMessage(
+          '🚫 GateKeeper: Commit blocked — focus violation detected. Do not switch windows or tabs during the quiz.'
+        );
+        resolve(false);
+        return;
+      }
+
       if (msg.command === 'submit' && !answered) {
         answered = true; // set BEFORE the async call so onDidDispose can't race
 
@@ -202,6 +212,10 @@ function getWebviewContent(question: string, diff: string): string {
       padding: 3px 8px;
       border-radius: 99px;
       letter-spacing: 0.5px;
+    }
+    .badge-security {
+      background: #cba6f7;
+      color: #1e1e2e;
     }
 
     /* ── Timer ── */
@@ -316,9 +330,10 @@ function getWebviewContent(question: string, diff: string): string {
   <div class="header">
     <h1>🔒 GateKeeper</h1>
     <span class="badge">PRE-COMMIT</span>
+    <span class="badge badge-security">SECURITY LEVEL: HIGH</span>
   </div>
 
-  <div id="anticheat-banner">⚠️ Anti-cheat: tab switch detected — 10 seconds deducted!</div>
+  <div id="anticheat-banner">🚫 Security violation: focus lost — commit blocked!</div>
 
   <div class="timer-row">
     <span class="timer-label">Time remaining:</span>
@@ -396,13 +411,19 @@ function getWebviewContent(question: string, diff: string): string {
     // ── Anti-cheat: no right-click context menu ───────────────────────────────
     document.addEventListener('contextmenu', e => e.preventDefault());
 
-    // ── Anti-cheat: tab / window visibility switch → deduct 10s ──────────────
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden && !submitted) {
-        remaining = Math.max(0, remaining - 10);
+    // ── Anti-cheat: no drag and drop ─────────────────────────────────────────
+    document.addEventListener('dragover', e => e.preventDefault());
+    document.addEventListener('drop',     e => e.preventDefault());
+
+    // ── Strict Focus: any focus loss → immediate hard fail ───────────────────
+    window.addEventListener('blur', () => {
+      if (!submitted) {
+        submitted = true;
+        clearInterval(timerInterval);
+        btnSubmit.disabled = true;
         const banner = document.getElementById('anticheat-banner');
         banner.style.display = 'block';
-        setTimeout(() => { banner.style.display = 'none'; }, 3000);
+        vscode.postMessage({ command: 'security-violation', reason: 'Focus lost' });
       }
     });
 
